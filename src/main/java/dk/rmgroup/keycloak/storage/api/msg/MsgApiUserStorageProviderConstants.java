@@ -13,4 +13,8 @@ public final class MsgApiUserStorageProviderConstants {
     public static final String CONFIG_DEFAULT_AUTHORITY = "https://login.microsoftonline.com/Enter_the_Tenant_Id_Here/";
     public static final String CONFIG_DEFAULT_MSG_URL = "https://graph.microsoft.com/v1.0/";
     public static final String CONFIG_DEFAULT_SCOPE = "https://graph.microsoft.com/.default";
+    // adoreal fork (README "Adoreal fork"): three options, each defaulting to upstream behaviour.
+    public static final String CONFIG_KEY_REMOVE_MISSING_USERS = "removeMissingUsers";
+    public static final String CONFIG_KEY_IMPORT_UPN_DOMAINS = "importUpnDomains";
+    public static final String CONFIG_KEY_SYNC_ERROR_EMAIL = "syncErrorEmail";
 }

@@ -68,6 +68,9 @@ import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConst
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_MSG_BASE_URL;
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_SCOPE;
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_SECRET;
+import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_REMOVE_MISSING_USERS;
+import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_IMPORT_UPN_DOMAINS;
+import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_SYNC_ERROR_EMAIL;
 
 public class MsgApiUserStorageProviderFactory
     implements UserStorageProviderFactory<MsgApiUserStorageProvider>, ImportSynchronization {
@@ -145,6 +148,27 @@ public class MsgApiUserStorageProviderFactory
         .type(ProviderConfigProperty.STRING_TYPE)
         .helpText(
             "Comma separated list of Keycloak groups to be assigned to users who are not members of any of the mapped groups.")
+        .add()
+        .property()
+        .name(CONFIG_KEY_REMOVE_MISSING_USERS)
+        .label("Remove users missing from the directory")
+        .type(ProviderConfigProperty.BOOLEAN_TYPE)
+        .helpText(
+            "ON: a user linked to this provider that no longer exists in the directory is deleted. OFF: the user is disabled and their sessions are ended instead; groups and history are kept.")
+        .defaultValue("true")
+        .add()
+        .property()
+        .name(CONFIG_KEY_IMPORT_UPN_DOMAINS)
+        .label("Import only UPN domains")
+        .type(ProviderConfigProperty.STRING_TYPE)
+        .helpText(
+            "Comma separated list of domains. When set, only Member accounts whose userPrincipalName or mail is on one of these domains are imported; guests and other domains are skipped. Empty imports every account with a mail.")
+        .add()
+        .property()
+        .name(CONFIG_KEY_SYNC_ERROR_EMAIL)
+        .label("Email sync errors to")
+        .type(ProviderConfigProperty.STRING_TYPE)
+        .helpText("Address that receives an email when a synchronization fails, through the realm's SMTP settings. Empty sends nothing.")
         .add()
         .build();
   }
@@ -283,7 +307,8 @@ public class MsgApiUserStorageProviderFactory
 
       try {
         List<MsgApiUser> apiUsers = getMsgApiUsers(model.get(CONFIG_KEY_MSG_BASE_URL), token, groupMapConfig,
-            model.get(CONFIG_KEY_IMPORT_USERS_NOT_IN_MAPPED_GROUPS, false));
+            model.get(CONFIG_KEY_IMPORT_USERS_NOT_IN_MAPPED_GROUPS, false),
+            parseDomains(model.get(CONFIG_KEY_IMPORT_UPN_DOMAINS)));
 
         try {
           String allowUpdateUpnDomainsCommaSeparated = model.get(CONFIG_KEY_ALLOW_UPDATE_UPN_DOMAINS);
@@ -294,7 +319,7 @@ public class MsgApiUserStorageProviderFactory
           }
 
           MsgApiUserResult result = importApiUsers(sessionFactory, realmId, model, apiUsers, allowUpdateUpnDomains,
-              groupMapConfig);
+              groupMapConfig, model.get(CONFIG_KEY_REMOVE_MISSING_USERS, true));
 
           synchronizationResult = result.synchronizationResult;
           errors = result.errors;
@@ -326,16 +351,20 @@ public class MsgApiUserStorageProviderFactory
       synchronizationResult.setFailed(1);
     }
 
+    // adoreal: upstream mailed its own address; the address is now configuration and empty means no mail.
+    String syncErrorEmail = model.get(CONFIG_KEY_SYNC_ERROR_EMAIL, "");
+    boolean mailErrors = syncErrorEmail != null && !syncErrorEmail.isBlank();
+
     if (hasImportFinished) {
       adminEventLogger.Log(String.format("user-storage/%s/sync-finished", model.getName()), synchronizationResult);
 
-      if (synchronizationResult.getFailed() > 0) {
+      if (synchronizationResult.getFailed() > 0 && mailErrors) {
         try {
           String body = String.format(
               "Error during user synchronization for federation provider '%s' in realm: '%s'. %s users failed syncing. Errors:<br/><br/>%s",
               model.getName(), realm.getName(), synchronizationResult.getFailed(), String.join("<br/><br/>", errors));
 
-          emailSenderProvider.send(realm.getSmtpConfig(), "log.rmgroup@f24.com", "Error in user sync", body, body);
+          emailSenderProvider.send(realm.getSmtpConfig(), syncErrorEmail, "Error in user sync", body, body);
         } catch (EmailException ex) {
           logger.errorf(ex, "Failed to send email");
         }
@@ -344,12 +373,12 @@ public class MsgApiUserStorageProviderFactory
       adminEventLogger.Log(String.format("user-storage/%s/sync-error", model.getName()),
           "See server log for more details!");
 
-      try {
+      if (mailErrors) try {
         String body = String.format(
             "Error during user synchronization for federation provider '%s' in realm: '%s'. Errors:<br/><br/>%s",
             model.getName(), realm.getName(), String.join("<br/><br/>", errors));
 
-        emailSenderProvider.send(realm.getSmtpConfig(), "log.rmgroup@f24.com", "Error in user sync", body, body);
+        emailSenderProvider.send(realm.getSmtpConfig(), syncErrorEmail, "Error in user sync", body, body);
       } catch (EmailException ex) {
         logger.errorf(ex, "Failed to send email");
       }
@@ -454,7 +483,7 @@ public class MsgApiUserStorageProviderFactory
 
   private MsgApiUserResult importApiUsers(KeycloakSessionFactory sessionFactory, final String realmId,
       final ComponentModel fedModel, List<MsgApiUser> apiUsers, List<String> allowUpdateUpnDomains,
-      GroupMapConfig groupMapConfig) {
+      GroupMapConfig groupMapConfig, boolean removeMissingUsers) {
     final Map<String, GroupModel> groupMap = groupMapConfig.groupMap;
     final List<GroupModel> groupsForUsersNotInMappedGroups = groupMapConfig.groupsForUsersNotInMappedGroups;
 
@@ -535,8 +564,15 @@ public class MsgApiUserStorageProviderFactory
 
             for (final UserModel user : usersToRemovePage) {
               try {
-                userProvider.removeUser(realm, user);
-                removedCount.incrementAndGet();
+                if (removeMissingUsers) {
+                  userProvider.removeUser(realm, user);
+                  removedCount.incrementAndGet();
+                } else if (user.isEnabled()) {
+                  // adoreal: a leaver keeps their user, groups and history; they just cannot sign in any more.
+                  user.setEnabled(false);
+                  session.sessions().removeUserSessions(realm, user);
+                  updatedCount.incrementAndGet();
+                }
               } catch (Exception e) {
                 logger.errorf(e,
                     "Error removing non existing user with username '%s' in federation provider '%s'",
@@ -835,7 +871,7 @@ public class MsgApiUserStorageProviderFactory
   }
 
   private static List<MsgApiUser> getMsgApiUsers(String msgBaseUrl, String token, GroupMapConfig groupMapConfig,
-      boolean importUsersNotInMappedGroups)
+      boolean importUsersNotInMappedGroups, List<String> importUpnDomains)
       throws Exception {
     final Map<String, GroupModel> groupMap = groupMapConfig.groupMap;
     final Map<String, MsgApiUser> usersMap = new HashMap<>();
@@ -848,14 +884,14 @@ public class MsgApiUserStorageProviderFactory
       groupIdsAndMapKeys.forEach((groupId, groupMapKey) -> {
         try {
           URL transitiveMembersUrl = baseUri.resolve(String.format(
-              "./groups/%s/transitiveMembers?$top=999&$select=userPrincipalName,mail,givenName,surname,mobilePhone,accountEnabled",
+              "./groups/%s/transitiveMembers?$top=999&$select=userPrincipalName,mail,givenName,surname,mobilePhone,accountEnabled,userType",
               groupId)).toURL();
 
           List<JSONObject> users = fetchAllEntitiesFromMsgGetEndpoint(transitiveMembersUrl, token)
               .stream()
               .filter(o -> {
                 String odataType = o.getString("@odata.type");
-                return odataType.equals("#microsoft.graph.user") && !o.optString("mail").isEmpty();
+                return odataType.equals("#microsoft.graph.user") && isImportable(o, importUpnDomains);
               }).collect(Collectors.toList());
 
           users.forEach(u -> {
@@ -880,12 +916,12 @@ public class MsgApiUserStorageProviderFactory
 
     if (importUsersNotInMappedGroups) {
       URL usersUrl = baseUri
-          .resolve("./users?$top=999&$select=userPrincipalName,mail,givenName,surname,mobilePhone,accountEnabled")
+          .resolve("./users?$top=999&$select=userPrincipalName,mail,givenName,surname,mobilePhone,accountEnabled,userType")
           .toURL();
 
       List<JSONObject> users = fetchAllEntitiesFromMsgGetEndpoint(usersUrl, token).stream().filter(u -> {
         String userPrincipalName = u.getString("userPrincipalName");
-        return !usersMap.containsKey(userPrincipalName) && !u.optString("mail").isEmpty();
+        return !usersMap.containsKey(userPrincipalName) && isImportable(u, importUpnDomains);
       }).collect(Collectors.toList());
 
       users.forEach(u -> {
@@ -896,6 +932,35 @@ public class MsgApiUserStorageProviderFactory
     }
 
     return usersMap.values().stream().collect(Collectors.toList());
+  }
+
+  /** adoreal: comma separated config value to a lower-case list; null or blank gives an empty list. */
+  static List<String> parseDomains(String commaSeparated) {
+    if (commaSeparated == null || commaSeparated.isBlank()) {
+      return Collections.emptyList();
+    }
+    return Arrays.stream(commaSeparated.split(",")).map(String::trim).filter(d -> !d.isEmpty())
+        .map(String::toLowerCase).collect(Collectors.toList());
+  }
+
+  /**
+   * adoreal: whether a Graph user row is imported. Upstream imports every row with a mail. With domains set,
+   * only Member accounts (never guests) whose userPrincipalName or mail is on one of the domains are imported.
+   */
+  static boolean isImportable(JSONObject user, List<String> importUpnDomains) {
+    String mail = user.optString("mail", "");
+    if (mail.isEmpty()) {
+      return false;
+    }
+    if (importUpnDomains == null || importUpnDomains.isEmpty()) {
+      return true;
+    }
+    if (!"Member".equals(user.optString("userType", "Member"))) {
+      return false;
+    }
+    String upn = user.optString("userPrincipalName", "").toLowerCase();
+    String lowerMail = mail.toLowerCase();
+    return importUpnDomains.stream().anyMatch(d -> upn.endsWith("@" + d) || lowerMail.endsWith("@" + d));
   }
 
   private String getErrorMessage(Throwable e) {

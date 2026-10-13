@@ -6,7 +6,9 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -52,5 +54,14 @@ public class AdorealPatchesTest {
         row("x_other.com#EXT#@adoreal.onmicrosoft.com", "x@adoreal.com", "Guest"), ADOREAL));
     assertFalse("other domain", MsgApiUserStorageProviderFactory.isImportable(row("c@other.com", "c@other.com", "Member"), ADOREAL));
     assertFalse("no mail", MsgApiUserStorageProviderFactory.isImportable(row("d@adoreal.com", "", "Member"), ADOREAL));
+  }
+
+  @Test
+  public void only_handle_groups_in_group_map_keeps_groups_the_sync_does_not_manage() {
+    Set<String> managed = new HashSet<>(Arrays.asList("mapped-group"));
+    assertTrue("a mapped group may be left", MsgApiUserStorageProviderFactory.mayLeave("mapped-group", managed, true));
+    assertFalse("realm-owners is not the sync's to remove", MsgApiUserStorageProviderFactory.mayLeave("realm-owners", managed, true));
+    assertFalse("with an empty map nothing is ever removed", MsgApiUserStorageProviderFactory.mayLeave("realm-owners", new HashSet<>(), true));
+    assertTrue("upstream behaviour when the option is off", MsgApiUserStorageProviderFactory.mayLeave("realm-owners", managed, false));
   }
 }

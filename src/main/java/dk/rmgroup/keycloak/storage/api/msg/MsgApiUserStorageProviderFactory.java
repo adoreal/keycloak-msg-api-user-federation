@@ -72,6 +72,7 @@ import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConst
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_IMPORT_UPN_DOMAINS;
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_SYNC_ERROR_EMAIL;
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_VALIDATE_AUTHORITY;
+import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_ONLY_USE_GROUPS_IN_GROUP_MAP;
 
 public class MsgApiUserStorageProviderFactory
     implements UserStorageProviderFactory<MsgApiUserStorageProvider>, ImportSynchronization {
@@ -170,6 +171,14 @@ public class MsgApiUserStorageProviderFactory
         .label("Email sync errors to")
         .type(ProviderConfigProperty.STRING_TYPE)
         .helpText("Address that receives an email when a synchronization fails, through the realm's SMTP settings. Empty sends nothing.")
+        .add()
+        .property()
+        .name(CONFIG_KEY_ONLY_USE_GROUPS_IN_GROUP_MAP)
+        .label("Only handle groups in group map")
+        .type(ProviderConfigProperty.BOOLEAN_TYPE)
+        .helpText(
+            "ON: the sync adds and removes users only in the groups named in the group map and in \"Groups for users not in mapped groups\"; any other group membership is left alone. OFF: a synced user is removed from every group the sync did not put them in.")
+        .defaultValue("false")
         .add()
         .property()
         .name(CONFIG_KEY_VALIDATE_AUTHORITY)
@@ -495,6 +504,14 @@ public class MsgApiUserStorageProviderFactory
     final Map<String, GroupModel> groupMap = groupMapConfig.groupMap;
     final List<GroupModel> groupsForUsersNotInMappedGroups = groupMapConfig.groupsForUsersNotInMappedGroups;
 
+    // adoreal: with "Only handle groups in group map" the sync may only leave groups it manages.
+    final boolean onlyUseGroupsInGroupMap = fedModel.get(CONFIG_KEY_ONLY_USE_GROUPS_IN_GROUP_MAP, false);
+    final Set<String> managedGroupIds = new HashSet<>();
+    if (groupMap != null) {
+      groupMap.values().forEach(g -> managedGroupIds.add(g.getId()));
+    }
+    groupsForUsersNotInMappedGroups.forEach(g -> managedGroupIds.add(g.getId()));
+
     final String fedId = fedModel.getId();
 
     final Set<String> apiUsersUpnSet = apiUsers.stream().map(u -> u.getUserPrincipalName()).distinct()
@@ -680,7 +697,7 @@ public class MsgApiUserStorageProviderFactory
                   }
                 }
                 List<GroupModel> groupsToLeave = importedUser.getGroupsStream().filter(g -> {
-                  return !groupIds.contains(g.getId());
+                  return !groupIds.contains(g.getId()) && mayLeave(g.getId(), managedGroupIds, onlyUseGroupsInGroupMap);
                 }).collect(Collectors.toList());
 
                 if (!groupsToLeave.isEmpty()) {
@@ -700,7 +717,7 @@ public class MsgApiUserStorageProviderFactory
                     }
                   }
                   List<GroupModel> groupsToLeave = importedUser.getGroupsStream().filter(g -> {
-                    return !groupIds.contains(g.getId());
+                    return !groupIds.contains(g.getId()) && mayLeave(g.getId(), managedGroupIds, onlyUseGroupsInGroupMap);
                   }).collect(Collectors.toList());
 
                   if (!groupsToLeave.isEmpty()) {
@@ -710,7 +727,9 @@ public class MsgApiUserStorageProviderFactory
                     });
                   }
                 } else {
-                  List<GroupModel> groupsToLeave = importedUser.getGroupsStream().collect(Collectors.toList());
+                  List<GroupModel> groupsToLeave = importedUser.getGroupsStream()
+                      .filter(g -> mayLeave(g.getId(), managedGroupIds, onlyUseGroupsInGroupMap))
+                      .collect(Collectors.toList());
 
                   if (!groupsToLeave.isEmpty()) {
                     groupsChanged = true;
@@ -946,6 +965,11 @@ public class MsgApiUserStorageProviderFactory
     }
 
     return usersMap.values().stream().collect(Collectors.toList());
+  }
+
+  /** adoreal: whether the sync may remove a user from this group (see "Only handle groups in group map"). */
+  static boolean mayLeave(String groupId, Set<String> managedGroupIds, boolean onlyUseGroupsInGroupMap) {
+    return !onlyUseGroupsInGroupMap || managedGroupIds.contains(groupId);
   }
 
   /** adoreal: comma separated config value to a lower-case list; null or blank gives an empty list. */

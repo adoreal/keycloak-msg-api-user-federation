@@ -18,4 +18,5 @@ public final class MsgApiUserStorageProviderConstants {
     public static final String CONFIG_KEY_IMPORT_UPN_DOMAINS = "importUpnDomains";
     public static final String CONFIG_KEY_SYNC_ERROR_EMAIL = "syncErrorEmail";
     public static final String CONFIG_KEY_VALIDATE_AUTHORITY = "validateAuthority";
+    public static final String CONFIG_KEY_ONLY_USE_GROUPS_IN_GROUP_MAP = "onlyUseGroupsInGroupMap";
 }

@@ -71,6 +71,7 @@ import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConst
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_REMOVE_MISSING_USERS;
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_IMPORT_UPN_DOMAINS;
 import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_SYNC_ERROR_EMAIL;
+import static dk.rmgroup.keycloak.storage.api.msg.MsgApiUserStorageProviderConstants.CONFIG_KEY_VALIDATE_AUTHORITY;
 
 public class MsgApiUserStorageProviderFactory
     implements UserStorageProviderFactory<MsgApiUserStorageProvider>, ImportSynchronization {
@@ -169,6 +170,13 @@ public class MsgApiUserStorageProviderFactory
         .label("Email sync errors to")
         .type(ProviderConfigProperty.STRING_TYPE)
         .helpText("Address that receives an email when a synchronization fails, through the realm's SMTP settings. Empty sends nothing.")
+        .add()
+        .property()
+        .name(CONFIG_KEY_VALIDATE_AUTHORITY)
+        .label("Validate authority")
+        .type(ProviderConfigProperty.BOOLEAN_TYPE)
+        .helpText("ON: the authority host is checked against Microsoft's instance discovery (keep ON for login.microsoftonline.com). OFF only for a private or test authority that Microsoft does not know.")
+        .defaultValue("true")
         .add()
         .build();
   }
@@ -301,7 +309,7 @@ public class MsgApiUserStorageProviderFactory
     try {
       String token = getMsgApiToken(model.get(CONFIG_KEY_AUTHORITY), model.get(CONFIG_KEY_CLIENT_ID),
           model.get(CONFIG_KEY_SECRET),
-          model.get(CONFIG_KEY_SCOPE));
+          model.get(CONFIG_KEY_SCOPE), model.get(CONFIG_KEY_VALIDATE_AUTHORITY, true));
 
       GroupMapConfig groupMapConfig = GetGroupMapConfig(sessionFactory, realmId, model);
 
@@ -749,10 +757,11 @@ public class MsgApiUserStorageProviderFactory
         apiUser.getAccountEnabled() == existingLocalUser.isEnabled();
   }
 
-  private static String getMsgApiToken(String authority, String clientId, String secret, String scope)
+  private static String getMsgApiToken(String authority, String clientId, String secret, String scope,
+      boolean validateAuthority)
       throws Exception {
     ConfidentialClientApplication app = ConfidentialClientApplication.builder(clientId,
-        ClientCredentialFactory.createFromSecret(secret)).authority(authority).build();
+        ClientCredentialFactory.createFromSecret(secret)).authority(authority).validateAuthority(validateAuthority).build();
 
     ClientCredentialParameters clientCredentialParam = ClientCredentialParameters.builder(
         Collections.singleton(scope))

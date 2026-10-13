@@ -17,4 +17,5 @@ public final class MsgApiUserStorageProviderConstants {
     public static final String CONFIG_KEY_REMOVE_MISSING_USERS = "removeMissingUsers";
     public static final String CONFIG_KEY_IMPORT_UPN_DOMAINS = "importUpnDomains";
     public static final String CONFIG_KEY_SYNC_ERROR_EMAIL = "syncErrorEmail";
+    public static final String CONFIG_KEY_VALIDATE_AUTHORITY = "validateAuthority";
 }

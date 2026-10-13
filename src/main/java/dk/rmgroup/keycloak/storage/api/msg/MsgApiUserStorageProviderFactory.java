@@ -175,7 +175,7 @@ public class MsgApiUserStorageProviderFactory
         .name(CONFIG_KEY_VALIDATE_AUTHORITY)
         .label("Validate authority")
         .type(ProviderConfigProperty.BOOLEAN_TYPE)
-        .helpText("ON: the authority host is checked against Microsoft's instance discovery (keep ON for login.microsoftonline.com). OFF only for a private or test authority that Microsoft does not know.")
+        .helpText("ON: the authority is validated through Microsoft's instance discovery (keep ON for login.microsoftonline.com). OFF skips instance discovery and validation, only for a private or test authority that Microsoft does not know.")
         .defaultValue("true")
         .add()
         .build();
@@ -761,7 +761,8 @@ public class MsgApiUserStorageProviderFactory
       boolean validateAuthority)
       throws Exception {
     ConfidentialClientApplication app = ConfidentialClientApplication.builder(clientId,
-        ClientCredentialFactory.createFromSecret(secret)).authority(authority).validateAuthority(validateAuthority).build();
+        ClientCredentialFactory.createFromSecret(secret)).authority(authority)
+        .validateAuthority(validateAuthority).instanceDiscovery(validateAuthority).build();
 
     ClientCredentialParameters clientCredentialParam = ClientCredentialParameters.builder(
         Collections.singleton(scope))

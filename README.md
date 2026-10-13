@@ -22,7 +22,7 @@ When deploying to Docker, copy the file before running `kc.sh build` in the Dock
 
 ## Adoreal fork
 
-Branch `adoreal/26.3.3`, tag `v26.3.3-adoreal.3`, based on upstream `v26.2.5` (the first upstream
+Branch `adoreal/26.3.3`, tag `v26.3.3-adoreal.4`, based on upstream `v26.2.5` (the first upstream
 version after it needs Keycloak 26.4+ APIs). Built against Keycloak 26.3.3 for the `adoreal-marketing`
 realm (adoreal-keycloak, ADR-0130). Three options, each defaulting to the upstream behaviour so the
 patches can be offered upstream as they are:

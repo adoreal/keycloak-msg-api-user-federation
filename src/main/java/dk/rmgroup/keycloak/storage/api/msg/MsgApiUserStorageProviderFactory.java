@@ -575,11 +575,15 @@ public class MsgApiUserStorageProviderFactory
                 if (removeMissingUsers) {
                   userProvider.removeUser(realm, user);
                   removedCount.incrementAndGet();
-                } else if (user.isEnabled()) {
+                } else {
                   // adoreal: a leaver keeps their user, groups and history; they just cannot sign in any more.
-                  user.setEnabled(false);
-                  session.sessions().removeUserSessions(realm, user);
-                  updatedCount.incrementAndGet();
+                  // `user` was read in another transaction, so write through a fresh model in this one.
+                  UserModel leaver = userProvider.getUserById(realm, user.getId());
+                  if (leaver != null && leaver.isEnabled()) {
+                    leaver.setEnabled(false);
+                    session.sessions().removeUserSessions(realm, leaver);
+                    updatedCount.incrementAndGet();
+                  }
                 }
               } catch (Exception e) {
                 logger.errorf(e,
